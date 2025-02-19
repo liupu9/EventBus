@@ -16,41 +16,60 @@
 
 package org.greenrobot.eventbus;
 
+import java.util.concurrent.locks.ReentrantLock;
+
 final class PendingPostQueue {
     private PendingPost head;
     private PendingPost tail;
 
-    synchronized void enqueue(PendingPost pendingPost) {
-        if (pendingPost == null) {
-            throw new NullPointerException("null cannot be enqueued");
-        }
-        if (tail != null) {
-            tail.next = pendingPost;
-            tail = pendingPost;
-        } else if (head == null) {
-            head = tail = pendingPost;
-        } else {
-            throw new IllegalStateException("Head present, but no tail");
-        }
-        notifyAll();
-    }
+    private final ReentrantLock lock = new ReentrantLock();
 
-    synchronized PendingPost poll() {
-        PendingPost pendingPost = head;
-        if (head != null) {
-            head = head.next;
-            if (head == null) {
-                tail = null;
+    void enqueue(PendingPost pendingPost) {
+        lock.lock();
+        try {
+            if (pendingPost == null) {
+                throw new NullPointerException("null cannot be enqueued");
             }
+            if (tail != null) {
+                tail.next = pendingPost;
+                tail = pendingPost;
+            } else if (head == null) {
+                head = tail = pendingPost;
+            } else {
+                throw new IllegalStateException("Head present, but no tail");
+            }
+            notifyAll();
+        } finally {
+            lock.unlock();
         }
-        return pendingPost;
     }
 
-    synchronized PendingPost poll(int maxMillisToWait) throws InterruptedException {
-        if (head == null) {
-            wait(maxMillisToWait);
+    PendingPost poll() {
+        lock.lock();
+        try {
+            PendingPost pendingPost = head;
+            if (head != null) {
+                head = head.next;
+                if (head == null) {
+                    tail = null;
+                }
+            }
+            return pendingPost;
+        } finally {
+            lock.unlock();
         }
-        return poll();
+    }
+
+    PendingPost poll(int maxMillisToWait) throws InterruptedException {
+        lock.lock();
+        try {
+            if (head == null) {
+                wait(maxMillisToWait);
+            }
+            return poll();
+        } finally {
+            lock.unlock();
+        }
     }
 
 }

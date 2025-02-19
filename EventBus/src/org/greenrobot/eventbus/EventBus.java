@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
 /**
@@ -47,10 +48,12 @@ public class EventBus {
 
     private static final EventBusBuilder DEFAULT_BUILDER = new EventBusBuilder();
     private static final Map<Class<?>, List<Class<?>>> eventTypesCache = new HashMap<>();
+    private static final ReentrantLock eventTypesCacheLock = new ReentrantLock();
 
     private final Map<Class<?>, CopyOnWriteArrayList<Subscription>> subscriptionsByEventType;
     private final Map<Object, List<Class<?>>> typesBySubscriber;
     private final Map<Class<?>, Object> stickyEvents;
+    private final ReentrantLock stickEventsLock = new ReentrantLock();
 
     private final ThreadLocal<PostingThreadState> currentPostingThreadState = new ThreadLocal<PostingThreadState>() {
         @Override
@@ -77,6 +80,8 @@ public class EventBus {
 
     private final int indexCount;
     private final Logger logger;
+
+    private final ReentrantLock lock = new ReentrantLock();
 
     /** Convenience singleton for apps using a process-wide EventBus instance. */
     public static EventBus getDefault() {
@@ -148,10 +153,13 @@ public class EventBus {
 
         Class<?> subscriberClass = subscriber.getClass();
         List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
-        synchronized (this) {
+        lock.lock();
+        try {
             for (SubscriberMethod subscriberMethod : subscriberMethods) {
                 subscribe(subscriber, subscriberMethod);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -178,11 +186,7 @@ public class EventBus {
             }
         }
 
-        List<Class<?>> subscribedEvents = typesBySubscriber.get(subscriber);
-        if (subscribedEvents == null) {
-            subscribedEvents = new ArrayList<>();
-            typesBySubscriber.put(subscriber, subscribedEvents);
-        }
+        List<Class<?>> subscribedEvents = typesBySubscriber.computeIfAbsent(subscriber, k -> new ArrayList<>());
         subscribedEvents.add(eventType);
 
         if (subscriberMethod.sticky) {
@@ -224,8 +228,13 @@ public class EventBus {
         return mainThreadSupport == null || mainThreadSupport.isMainThread();
     }
 
-    public synchronized boolean isRegistered(Object subscriber) {
-        return typesBySubscriber.containsKey(subscriber);
+    public boolean isRegistered(Object subscriber) {
+        lock.lock();
+        try {
+            return typesBySubscriber.containsKey(subscriber);
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** Only updates subscriptionsByEventType, not typesBySubscriber! Caller must update typesBySubscriber. */
@@ -246,15 +255,20 @@ public class EventBus {
     }
 
     /** Unregisters the given subscriber from all event classes. */
-    public synchronized void unregister(Object subscriber) {
-        List<Class<?>> subscribedTypes = typesBySubscriber.get(subscriber);
-        if (subscribedTypes != null) {
-            for (Class<?> eventType : subscribedTypes) {
-                unsubscribeByEventType(subscriber, eventType);
+    public void unregister(Object subscriber) {
+        lock.lock();
+        try {
+            List<Class<?>> subscribedTypes = typesBySubscriber.get(subscriber);
+            if (subscribedTypes != null) {
+                for (Class<?> eventType : subscribedTypes) {
+                    unsubscribeByEventType(subscriber, eventType);
+                }
+                typesBySubscriber.remove(subscriber);
+            } else {
+                logger.log(Level.WARNING, "Subscriber to unregister was not registered before: " + subscriber.getClass());
             }
-            typesBySubscriber.remove(subscriber);
-        } else {
-            logger.log(Level.WARNING, "Subscriber to unregister was not registered before: " + subscriber.getClass());
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -309,8 +323,11 @@ public class EventBus {
      * event of an event's type is kept in memory for future access by subscribers using {@link Subscribe#sticky()}.
      */
     public void postSticky(Object event) {
-        synchronized (stickyEvents) {
+        stickEventsLock.lock();
+        try {
             stickyEvents.put(event.getClass(), event);
+        } finally {
+            stickEventsLock.unlock();
         }
         // Should be posted after it is putted, in case the subscriber wants to remove immediately
         post(event);
@@ -322,8 +339,11 @@ public class EventBus {
      * @see #postSticky(Object)
      */
     public <T> T getStickyEvent(Class<T> eventType) {
-        synchronized (stickyEvents) {
+        stickEventsLock.lock();
+        try {
             return eventType.cast(stickyEvents.get(eventType));
+        } finally {
+            stickEventsLock.unlock();
         }
     }
 
@@ -333,8 +353,11 @@ public class EventBus {
      * @see #postSticky(Object)
      */
     public <T> T removeStickyEvent(Class<T> eventType) {
-        synchronized (stickyEvents) {
+        stickEventsLock.lock();
+        try {
             return eventType.cast(stickyEvents.remove(eventType));
+        } finally {
+            stickEventsLock.unlock();
         }
     }
 
@@ -344,7 +367,8 @@ public class EventBus {
      * @return true if the events matched and the sticky event was removed.
      */
     public boolean removeStickyEvent(Object event) {
-        synchronized (stickyEvents) {
+        stickEventsLock.lock();
+        try {
             Class<?> eventType = event.getClass();
             Object existingEvent = stickyEvents.get(eventType);
             if (event.equals(existingEvent)) {
@@ -353,6 +377,8 @@ public class EventBus {
             } else {
                 return false;
             }
+        } finally {
+            stickEventsLock.unlock();
         }
     }
 
@@ -360,8 +386,11 @@ public class EventBus {
      * Removes all sticky events.
      */
     public void removeAllStickyEvents() {
-        synchronized (stickyEvents) {
+        stickEventsLock.lock();
+        try {
             stickyEvents.clear();
+        } finally {
+            stickEventsLock.unlock();
         }
     }
 
@@ -372,8 +401,11 @@ public class EventBus {
             for (int h = 0; h < countTypes; h++) {
                 Class<?> clazz = eventTypes.get(h);
                 CopyOnWriteArrayList<Subscription> subscriptions;
-                synchronized (this) {
+                lock.lock();
+                try {
                     subscriptions = subscriptionsByEventType.get(clazz);
+                } finally {
+                    lock.unlock();
                 }
                 if (subscriptions != null && !subscriptions.isEmpty()) {
                     return true;
@@ -409,8 +441,11 @@ public class EventBus {
 
     private boolean postSingleEventForEventType(Object event, PostingThreadState postingState, Class<?> eventClass) {
         CopyOnWriteArrayList<Subscription> subscriptions;
-        synchronized (this) {
+        lock.lock();
+        try {
             subscriptions = subscriptionsByEventType.get(eventClass);
+        } finally {
+            lock.unlock();
         }
         if (subscriptions != null && !subscriptions.isEmpty()) {
             for (Subscription subscription : subscriptions) {
@@ -471,7 +506,8 @@ public class EventBus {
 
     /** Looks up all Class objects including super classes and interfaces. Should also work for interfaces. */
     private static List<Class<?>> lookupAllEventTypes(Class<?> eventClass) {
-        synchronized (eventTypesCache) {
+        eventTypesCacheLock.lock();
+        try {
             List<Class<?>> eventTypes = eventTypesCache.get(eventClass);
             if (eventTypes == null) {
                 eventTypes = new ArrayList<>();
@@ -484,6 +520,8 @@ public class EventBus {
                 eventTypesCache.put(eventClass, eventTypes);
             }
             return eventTypes;
+        } finally {
+            eventTypesCacheLock.unlock();
         }
     }
 

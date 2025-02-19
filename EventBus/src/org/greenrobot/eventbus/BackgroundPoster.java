@@ -15,6 +15,7 @@
  */
 package org.greenrobot.eventbus;
 
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 
 /**
@@ -29,6 +30,8 @@ final class BackgroundPoster implements Runnable, Poster {
 
     private volatile boolean executorRunning;
 
+    private final ReentrantLock lock = new ReentrantLock();
+
     BackgroundPoster(EventBus eventBus) {
         this.eventBus = eventBus;
         queue = new PendingPostQueue();
@@ -36,12 +39,15 @@ final class BackgroundPoster implements Runnable, Poster {
 
     public void enqueue(Subscription subscription, Object event) {
         PendingPost pendingPost = PendingPost.obtainPendingPost(subscription, event);
-        synchronized (this) {
+        lock.lock();
+        try {
             queue.enqueue(pendingPost);
             if (!executorRunning) {
                 executorRunning = true;
                 eventBus.getExecutorService().execute(this);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
@@ -52,13 +58,16 @@ final class BackgroundPoster implements Runnable, Poster {
                 while (true) {
                     PendingPost pendingPost = queue.poll(1000);
                     if (pendingPost == null) {
-                        synchronized (this) {
+                        lock.lock();
+                        try {
                             // Check again, this time in synchronized
                             pendingPost = queue.poll();
                             if (pendingPost == null) {
                                 executorRunning = false;
                                 return;
                             }
+                        } finally {
+                            lock.unlock();
                         }
                     }
                     eventBus.invokeSubscriber(pendingPost);

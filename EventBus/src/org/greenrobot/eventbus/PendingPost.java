@@ -17,9 +17,11 @@ package org.greenrobot.eventbus;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 
 final class PendingPost {
     private final static List<PendingPost> pendingPostPool = new ArrayList<PendingPost>();
+    private final static ReentrantLock lock = new ReentrantLock();
 
     Object event;
     Subscription subscription;
@@ -31,7 +33,8 @@ final class PendingPost {
     }
 
     static PendingPost obtainPendingPost(Subscription subscription, Object event) {
-        synchronized (pendingPostPool) {
+        lock.lock();
+        try {
             int size = pendingPostPool.size();
             if (size > 0) {
                 PendingPost pendingPost = pendingPostPool.remove(size - 1);
@@ -40,6 +43,8 @@ final class PendingPost {
                 pendingPost.next = null;
                 return pendingPost;
             }
+        } finally {
+            lock.unlock();
         }
         return new PendingPost(event, subscription);
     }
@@ -48,11 +53,14 @@ final class PendingPost {
         pendingPost.event = null;
         pendingPost.subscription = null;
         pendingPost.next = null;
-        synchronized (pendingPostPool) {
+        lock.lock();
+        try {
             // Don't let the pool grow indefinitely
             if (pendingPostPool.size() < 10000) {
                 pendingPostPool.add(pendingPost);
             }
+        } finally {
+            lock.unlock();
         }
     }
 
