@@ -25,6 +25,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 class SubscriberMethodFinder {
     /*
@@ -44,6 +45,7 @@ class SubscriberMethodFinder {
 
     private static final int POOL_SIZE = 4;
     private static final FindState[] FIND_STATE_POOL = new FindState[POOL_SIZE];
+    private static final ReentrantLock lock = new ReentrantLock();
 
     SubscriberMethodFinder(List<SubscriberInfoIndex> subscriberInfoIndexes, boolean strictMethodVerification,
                            boolean ignoreGeneratedIndex) {
@@ -95,19 +97,23 @@ class SubscriberMethodFinder {
     private List<SubscriberMethod> getMethodsAndRelease(FindState findState) {
         List<SubscriberMethod> subscriberMethods = new ArrayList<>(findState.subscriberMethods);
         findState.recycle();
-        synchronized (FIND_STATE_POOL) {
+        lock.lock();
+        try {
             for (int i = 0; i < POOL_SIZE; i++) {
                 if (FIND_STATE_POOL[i] == null) {
                     FIND_STATE_POOL[i] = findState;
                     break;
                 }
             }
+        } finally {
+            lock.unlock();
         }
         return subscriberMethods;
     }
 
     private FindState prepareFindState() {
-        synchronized (FIND_STATE_POOL) {
+        lock.lock();
+        try {
             for (int i = 0; i < POOL_SIZE; i++) {
                 FindState state = FIND_STATE_POOL[i];
                 if (state != null) {
@@ -115,6 +121,8 @@ class SubscriberMethodFinder {
                     return state;
                 }
             }
+        } finally {
+            lock.unlock();
         }
         return new FindState();
     }

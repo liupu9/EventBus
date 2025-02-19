@@ -16,6 +16,7 @@
 package org.greenrobot.eventbus;
 
 import java.lang.reflect.Method;
+import java.util.concurrent.locks.ReentrantLock;
 
 /** Used internally by EventBus and generated subscriber indexes. */
 public class SubscriberMethod {
@@ -26,6 +27,8 @@ public class SubscriberMethod {
     final boolean sticky;
     /** Used for efficient comparison */
     String methodString;
+
+    ReentrantLock lock = new ReentrantLock();
 
     public SubscriberMethod(Method method, Class<?> eventType, ThreadMode threadMode, int priority, boolean sticky) {
         this.method = method;
@@ -50,14 +53,19 @@ public class SubscriberMethod {
         }
     }
 
-    private synchronized void checkMethodString() {
-        if (methodString == null) {
-            // Method.toString has more overhead, just take relevant parts of the method
-            StringBuilder builder = new StringBuilder(64);
-            builder.append(method.getDeclaringClass().getName());
-            builder.append('#').append(method.getName());
-            builder.append('(').append(eventType.getName());
-            methodString = builder.toString();
+    private void checkMethodString() {
+        lock.lock();
+        try {
+            if (methodString == null) {
+                // Method.toString has more overhead, just take relevant parts of the method
+                StringBuilder builder = new StringBuilder(64);
+                builder.append(method.getDeclaringClass().getName());
+                builder.append('#').append(method.getName());
+                builder.append('(').append(eventType.getName());
+                methodString = builder.toString();
+            }
+        } finally {
+            lock.unlock();
         }
     }
 
