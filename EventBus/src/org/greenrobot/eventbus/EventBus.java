@@ -81,17 +81,20 @@ public class EventBus {
     private final int indexCount;
     private final Logger logger;
 
-    private final ReentrantLock lock = new ReentrantLock();
+    public static final ReentrantLock lock = new ReentrantLock();
 
     /** Convenience singleton for apps using a process-wide EventBus instance. */
     public static EventBus getDefault() {
         EventBus instance = defaultInstance;
         if (instance == null) {
-            synchronized (EventBus.class) {
+            lock.lock();
+            try {
                 instance = EventBus.defaultInstance;
                 if (instance == null) {
                     instance = EventBus.defaultInstance = new EventBus();
                 }
+            } finally {
+                lock.unlock();
             }
         }
         return instance;

@@ -175,13 +175,16 @@ public class EventBusBuilder {
      * @throws EventBusException if there's already a default EventBus instance in place
      */
     public EventBus installDefaultEventBus() {
-        synchronized (EventBus.class) {
+        EventBus.lock.lock();
+        try {
             if (EventBus.defaultInstance != null) {
                 throw new EventBusException("Default instance already exists." +
                         " It may be only set once before it's used the first time to ensure consistent behavior.");
             }
             EventBus.defaultInstance = build();
             return EventBus.defaultInstance;
+        } finally {
+            EventBus.lock.unlock();
         }
     }
 
